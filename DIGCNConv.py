@@ -3,7 +3,7 @@ Define the DiGCN convolution operation
 """
 import torch
 from torch.nn import Parameter
-from torch_scatter import scatter_add
+# from torch_scatter import scatter_add
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import add_remaining_self_loops, add_self_loops
 from torch_geometric.utils import to_undirected, is_undirected
@@ -62,9 +62,9 @@ class DIGCNConv(MessagePassing):
         
         x = torch.matmul(x, self.weight)
         
-        print("+++++++++++DIGCNConv.py+++++++++++")
-        print("---x---")
-        print(x)
+        # print("+++++++++++DIGCNConv.py+++++++++++")
+        # print("---x---")
+        # print(x)
         # print("---edge_index---")
         # print(edge_index)
         # print("---edge_attr---")
@@ -87,21 +87,21 @@ class DIGCNConv(MessagePassing):
             self.cached_result = edge_index, norm
 
         edge_index, norm = self.cached_result
-        print("+++++++++++++DIGCNConv.py+++++++++++")
-        print("-----DIGCNConv()->forward()------")
-        print("-----size checking-----")
-        print(norm.size())
-        print(edge_attr.size()) 
+        # print("+++++++++++++DIGCNConv.py+++++++++++")
+        # print("-----DIGCNConv()->forward()------")
+        # print("-----size checking-----")
+        # print(norm.size())
+        # print(edge_attr.size()) 
         
         return self.propagate(edge_index, x=x, norm=norm)
 
     def message(self, x_j, norm):
         
-        print("+++++++++++++DIGCNConv.py++++++++++")
-        print("-----DIGCNConv()->message()------")
-        print("-----check dimension-----")
-        print(norm.view(-1, 1).size())
-        print(x_j.size())
+        # print("+++++++++++++DIGCNConv.py++++++++++")
+        # print("-----DIGCNConv()->message()------")
+        # print("-----check dimension-----")
+        # print(norm.view(-1, 1).size())
+        # print(x_j.size())
         
         return norm.view(-1, 1) * x_j if norm is not None else x_j
         
