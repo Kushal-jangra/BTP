@@ -133,6 +133,82 @@ For each dataset, first generate graphs, then run the corresponding main script.
 
 ---
 
+## BTP Research Extension: BGL Temporal Anomaly Detection
+
+The BTP extension preserves the original OCDiGCN baseline and adds a separate
+temporal research branch for BGL Protocol A. The baseline remains the reference
+model for every comparison.
+
+### What was present originally
+
+The original repository provides log-to-graph conversion, directed weighted
+graphs, semantic event-template node features, the DiGCN/OCDiGCN one-class
+anomaly detector, and explanation-oriented model components for five datasets.
+The paper-aligned BGL implementation uses directed PPR-normalized adjacency,
+200-dimensional template embeddings, hidden dimension 300, SGD optimization,
+and a one-class hypersphere objective.
+
+### What was added
+
+The BGL research extension uses official structured templates, official
+200-dimensional embeddings, and the original Protocol A splits. It extracts
+transition counts plus inter-event timing statistics, reproduces the paper's
+directed PPR normalization, standardizes temporal features using normal
+training graphs only, and uses staged SVDD training.
+
+Two temporal branches were evaluated:
+
+- **Graph-level temporal residual**: summarizes timing statistics per graph and
+  adds a bounded residual after DiGCN message passing.
+- **Edge-level temporal fusion**: injects log-scaled mean and variance of
+  inter-event time directly into edge messages.
+
+### Results
+
+All results use seeds `42`, `100`, `2024`, `777`, and `1213`.
+
+| Model | ROC-AUC mean ± std | ROC-AUC peak | PRC-AUC mean ± std |
+| --- | ---: | ---: | ---: |
+| Exact paper-aligned baseline | 91.91% ± 5.31% | 96.11% | 95.62% ± 2.67% |
+| Graph-level temporal residual | 92.06% ± 0.53% | 92.56% | 95.57% ± 0.29% |
+| **Edge-level temporal fusion** | **92.34% ± 0.36%** | **92.86%** | 95.04% ± 0.27% |
+
+The edge-level branch improves mean ROC-AUC by approximately 0.43 percentage
+points over the exact baseline and greatly reduces seed variance. Its PRC-AUC
+is lower, so temporal edge fusion currently improves ROC ranking and robustness
+but is not yet a universal improvement across every metric.
+
+### How the result was achieved
+
+The current edge-level configuration uses log-scaled mean and variance edge
+features, PPR adjacency with `alpha=0.1`, temporal residual strength `0.05`,
+10 epochs of temporal-only warm-up, base learning rate `0.0001`, temporal
+learning rate `0.001`, hidden dimension `300`, batch size `128`, weight decay
+`1e-4`, and 100 epochs. A bounded `tanh` residual prevents timing features
+from erasing the semantic node representation.
+
+### Reproducing the BGL experiments
+
+```bash
+./.venv/bin/python prepare_bgl_paper_dataset.py
+./.venv/bin/python prepare_bgl_temporal_features.py
+./.venv/bin/python run_bgl_paper_exact.py
+./.venv/bin/python run_bgl_temporal_final.py
+./.venv/bin/python run_bgl_edge_temporal.py
+./.venv/bin/python run_bgl_temporal_ablation.py
+```
+
+Generated tensors, downloaded datasets, caches, and local paper files are
+excluded from Git by `.gitignore` and should be regenerated locally.
+
+### Research status and next direction
+
+The baseline comparison is reproducible and the temporal branch is isolated.
+The next direction is to improve the edge-level model's PRC-AUC without losing
+its ROC-AUC gain, using multi-scale timing features and validation-only tuning
+of residual strength and SVDD warm-up. Labels, anomaly ratios, and test splits
+must remain unchanged for comparison with the base paper.
+
 ## References and Acknowledgements
 
 This codebase builds on ideas and components from:
