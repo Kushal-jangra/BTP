@@ -1,0 +1,87 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Build enhanced BGL graphs",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}/prepare_local_enhanced_bgl.py",
+      "args": [
+        "--input",
+        "${input:localBglCsv}",
+        "--max-graphs",
+        "10000",
+        "--chunk-size",
+        "100000"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Train and evaluate enhanced BGL",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}/run_bgl_paper_exact.py",
+      "args": [
+        "--dataset",
+        "bgl_enhanced_graphs.pt",
+        "--splits-dir",
+        "splits_enhanced",
+        "--normalized-dataset",
+        "bgl_enhanced_digcn_graphs.pt",
+        "--epochs",
+        "5",
+        "--seeds",
+        "42",
+        "--hidden-dim",
+        "128",
+        "--batch-size",
+        "64",
+        "--artifact-dir",
+        "artifacts/enhanced_bgl"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Score graphs with saved checkpoint",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}/load_enhanced_model.py",
+      "args": [
+        "--checkpoint",
+        "artifacts/enhanced_bgl/ocdigcn_seed_42.pt",
+        "--graphs",
+        "bgl_enhanced_digcn_graphs.pt",
+        "--output",
+        "artifacts/enhanced_bgl/scored_graphs.csv"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Show ROC and PR curves",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}/show_evaluation_curves.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "localBglCsv",
+      "type": "promptString",
+      "description": "Path to processed_log_data.csv",
+      "default": "C:\\path\\to\\processed_log_data.csv"
+    }
+  ]
+}

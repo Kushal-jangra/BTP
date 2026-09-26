@@ -24,7 +24,11 @@ def _timestamp_seconds(frame):
     return pd.to_datetime(frame["Time"]).astype("int64").to_numpy() / 1e9
 
 
-def prepare_paper_dataset(structured_csv, embedding_json, splits_dir, output):
+def prepare_paper_dataset(
+    structured_csv, embedding_json, splits_dir, output,
+    enhanced_node_features=False,
+    transformer_model="sentence-transformers/all-MiniLM-L6-v2",
+):
     df = pd.read_csv(structured_csv)
     required = {"Node", "EventTemplate", "Timestamp"}
     missing = required.difference(df.columns)
@@ -35,18 +39,25 @@ def prepare_paper_dataset(structured_csv, embedding_json, splits_dir, output):
     node_to_split = dict(zip(manifest["node"], manifest["split"]))
     node_to_label = dict(zip(manifest["node"], manifest["graph_label"]))
 
-    with open(embedding_json) as f:
-        embedding_dict = json.load(f)
-    first_embedding = next(iter(embedding_dict.values()))
-    embedding_dim = len(first_embedding)
-    if isinstance(first_embedding, dict):
-        def embedding_vector(template):
-            values = embedding_dict[template]
-            return [values[str(i)] for i in range(embedding_dim)]
+    enhanced_builder = None
+    if enhanced_node_features:
+        from enhanced_node_builder import EnhancedNodeBuilder
+        enhanced_builder = EnhancedNodeBuilder(model_name=transformer_model)
+        embedding_dim = None
+        template_to_idx = None
     else:
-        def embedding_vector(template):
-            return embedding_dict[template]
-    template_to_idx = {template: i for i, template in enumerate(embedding_dict)}
+        with open(embedding_json) as f:
+            embedding_dict = json.load(f)
+        first_embedding = next(iter(embedding_dict.values()))
+        embedding_dim = len(first_embedding)
+        if isinstance(first_embedding, dict):
+            def embedding_vector(template):
+                values = embedding_dict[template]
+                return [values[str(i)] for i in range(embedding_dim)]
+        else:
+            def embedding_vector(template):
+                return embedding_dict[template]
+        template_to_idx = {template: i for i, template in enumerate(embedding_dict)}
 
     graphs = {}
     for node, group in tqdm(df.groupby("Node"), total=df["Node"].nunique()):
@@ -55,16 +66,19 @@ def prepare_paper_dataset(structured_csv, embedding_json, splits_dir, output):
 
         templates = group["EventTemplate"].astype(str).tolist()
         local_templates = list(dict.fromkeys(templates))
-        unknown = [t for t in local_templates if t not in template_to_idx]
-        if unknown:
-            raise KeyError(f"Embedding dictionary lacks {len(unknown)} BGL templates")
+        if enhanced_builder is not None:
+            # The builder preserves unique-template first-occurrence order.
+            x = enhanced_builder.build_node_features(group.to_dict(orient="records"))
+        else:
+            unknown = [t for t in local_templates if t not in template_to_idx]
+            if unknown:
+                raise KeyError(f"Embedding dictionary lacks {len(unknown)} BGL templates")
+            x = torch.tensor(
+                [embedding_vector(template) for template in local_templates],
+                dtype=torch.float32,
+            )
 
         local_idx = {template: i for i, template in enumerate(local_templates)}
-        node_ids = [template_to_idx[t] for t in local_templates]
-        x = torch.tensor(
-            [embedding_vector(local_templates[i]) for i in range(len(local_templates))],
-            dtype=torch.float32,
-        )
 
         timestamps = _timestamp_seconds(group)
         edge_deltas = {}
@@ -93,7 +107,10 @@ def prepare_paper_dataset(structured_csv, embedding_json, splits_dir, output):
         )
         graph.node_id = node
         graph.graph_split = node_to_split[node]
-        graph.embedding_source = "official_glove_tfidf_200d"
+        graph.embedding_source = (
+            f"transformer:{transformer_model}" if enhanced_builder is not None
+            else "official_glove_tfidf_200d"
+        )
         graph.edge_weight_transform = "raw_count"
         graphs[node] = graph
 
@@ -104,7 +121,7 @@ def prepare_paper_dataset(structured_csv, embedding_json, splits_dir, output):
     nodes = np.array([g.x.size(0) for g in graphs.values()])
     edges = np.array([g.edge_index.size(1) for g in graphs.values()])
     print(f"Saved {len(graphs)} paper-aligned graphs to {output}")
-    print(f"Embedding dimension: {embedding_dim}")
+    print(f"Node feature dimension: {graphs[next(iter(graphs))].x.size(1)}")
     print(f"Nodes per graph: mean={nodes.mean():.2f}, median={np.median(nodes):.2f}")
     print(f"Edges per graph: mean={edges.mean():.2f}, median={np.median(edges):.2f}")
 
@@ -115,5 +132,17 @@ if __name__ == "__main__":
     parser.add_argument("--embedding-json", default="Data/Gloves/Results/EmbeddingDict_BGL.json")
     parser.add_argument("--splits-dir", default="splits")
     parser.add_argument("--output", default="bgl_paper_graphs.pt")
+    parser.add_argument(
+        "--enhanced-node-features", action="store_true",
+        help="Use contextual Transformer and log-level/statistical node features.",
+    )
+    parser.add_argument(
+        "--transformer-model", default="sentence-transformers/all-MiniLM-L6-v2",
+        help="Hugging Face encoder used with --enhanced-node-features.",
+    )
     args = parser.parse_args()
-    prepare_paper_dataset(args.structured_csv, args.embedding_json, args.splits_dir, args.output)
+    prepare_paper_dataset(
+        args.structured_csv, args.embedding_json, args.splits_dir, args.output,
+        enhanced_node_features=args.enhanced_node_features,
+        transformer_model=args.transformer_model,
+    )

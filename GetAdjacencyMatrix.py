@@ -12,7 +12,20 @@ from torch_geometric.utils import to_undirected, is_undirected, to_networkx
 from networkx.algorithms.components import is_weakly_connected
 
 from torch_geometric.utils import add_remaining_self_loops, add_self_loops, remove_self_loops
-from torch_scatter import scatter_add
+try:
+    from torch_scatter import scatter_add
+except ImportError:
+    # PyTorch's native index_add keeps the project runnable on Windows where
+    # optional torch-scatter binary wheels may not be available.
+    def scatter_add(src, index, dim=0, out=None, dim_size=None):
+        if out is not None:
+            raise NotImplementedError("The native scatter_add fallback does not accept out=")
+        if dim_size is None:
+            dim_size = int(index.max()) + 1 if index.numel() else 0
+        size = list(src.size())
+        size[dim] = dim_size
+        result = src.new_zeros(size)
+        return result.index_add(dim, index, src)
 import scipy
 
 

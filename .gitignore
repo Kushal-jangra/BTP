@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 *.pt
 splits/
+splits_enhanced/
+artifacts/
 Data/
 *.pdf
 bgl_multiseed_results*.csv
