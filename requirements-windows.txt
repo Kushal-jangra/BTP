@@ -1,0 +1,10 @@
+# Install torch separately from the official CPU index using setup_windows.ps1.
+numpy<3
+pandas>=2.2,<4
+scikit-learn>=1.5,<2
+scipy>=1.13,<2
+networkx>=3.3,<4
+matplotlib>=3.9,<4
+tqdm>=4.66,<5
+torch-geometric>=2.6,<3
+transformers>=4.44,<5

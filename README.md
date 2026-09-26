@@ -73,11 +73,13 @@ The dataset is not stored directly in this repository. Please download it from Z
 
 ### Step 0: Check Requirements
 
-Install the required packages:
+For a Windows/Python 3.12 workspace, install the compatible environment with:
 
 ```bash
-pip install -r requirements.txt
+.\setup_windows.ps1
 ```
+
+The original pinned `requirements.txt` remains for the legacy paper setup.
 
 ---
 
@@ -134,6 +136,113 @@ For each dataset, first generate graphs, then run the corresponding main script.
 ---
 
 ## BTP Research Extension: BGL Temporal Anomaly Detection
+
+### Enhanced node feature builder
+
+`enhanced_node_builder.py` provides an optional `EnhancedNodeBuilder` for
+parsed log groups. Each unique event template (in first-occurrence order) gets
+a normalized MiniLM contextual embedding, fixed seven-way severity encoding,
+stable 32-bin hashed component encoding, within-group frequency and relative
+first/last positions, and four signed-log-scaled numerical-parameter statistics
+(mean, standard deviation, minimum, maximum). Missing parameters are zero-filled. Features are
+standardized within each graph by default and returned as a `torch.float32`
+matrix, ready for `torch_geometric.data.Data.x`.
+
+Install the additional model dependency with `pip install -r requirements.txt`.
+The first builder initialization downloads the configured Hugging Face model;
+you can select another compatible model with `EnhancedNodeBuilder(model_name=...)`.
+Records should be chronological dictionaries containing an event template
+(`EventTemplate`, `event_template`, or `template`) and, when available, raw
+message/content, severity/level, component/module, and parameter fields. For
+example:
+
+```python
+from enhanced_node_builder import EnhancedNodeBuilder
+from torch_geometric.data import Data
+
+builder = EnhancedNodeBuilder()
+x = builder.build_node_features(parsed_log_group)
+graph = Data(x=x, edge_index=edge_index)
+```
+
+The existing BGL graph-generation script can opt into this feature path while
+keeping the official GloVe path as its default:
+
+```bash
+python prepare_bgl_paper_dataset.py --enhanced-node-features \
+  --output bgl_enhanced_graphs.pt
+```
+
+This builder is an opt-in feature path; the paper-aligned experiments below
+continue using the existing official 200-dimensional embedding artifact.
+
+### Run the enhanced model with the supplied local BGL dataset (Windows)
+
+From the BTP workspace, install the isolated Python 3.12 environment:
+
+```powershell
+.\setup_windows.ps1
+```
+
+Then build enhanced graphs directly from the processed BGL CSV in Downloads.
+The builder scans the source in chunks, creates a deterministic sample of up
+to 10,000 groups, and writes graph tensors and split files under the workspace:
+
+```powershell
+.\.venv\Scripts\python.exe prepare_local_enhanced_bgl.py `
+  --input 'C:\path\to\processed_log_data.csv'
+```
+
+Train and evaluate the OCDiGCN model on that feature matrix (example uses one
+seed and 5 epochs to make the first run practical). The runner saves ROC and
+Precision–Recall plots and threshold coordinates alongside a reloadable model
+checkpoint:
+
+```powershell
+.\.venv\Scripts\python.exe run_bgl_paper_exact.py `
+  --dataset bgl_enhanced_graphs.pt `
+  --splits-dir splits_enhanced `
+  --normalized-dataset bgl_enhanced_digcn_graphs.pt `
+  --epochs 5 --seeds 42 --hidden-dim 128 --batch-size 64
+```
+
+The checkpoint is written to
+`artifacts/enhanced_bgl/ocdigcn_seed_42.pt`; the combined curves are written to
+`artifacts/enhanced_bgl/ocdigcn_seed_42_roc_pr_curves.png`. To load the model in
+VS Code, open the BTP folder, select `.venv\Scripts\python.exe` as the Python
+interpreter, then use:
+
+```python
+from load_enhanced_model import load_checkpoint, score_graphs
+import torch
+
+model, center, metadata, device = load_checkpoint(
+    "artifacts/enhanced_bgl/ocdigcn_seed_42.pt"
+)
+graphs = torch.load("bgl_enhanced_digcn_graphs.pt", map_location="cpu", weights_only=False)
+scores = score_graphs(model, center, graphs, device)
+```
+
+Or score the saved graph artifact from a terminal:
+
+```powershell
+.\.venv\Scripts\python.exe load_enhanced_model.py
+```
+
+The workspace includes VS Code launch profiles under `.vscode/launch.json`.
+Open the BTP folder in VS Code, select **Run and Debug** on the sidebar, then
+choose **Train and evaluate enhanced BGL** and press **F5**. The launch profile
+points directly at this workspace's `.venv` interpreter and the prepared graph
+files. To regenerate graphs first, choose **Build enhanced BGL graphs**.
+To recreate the figure in a plot window from the saved CSV curve coordinates,
+choose **Show ROC and PR curves** and press **F5**. Do not run the curve CSV
+files with Code Runner; they contain coordinates, not Python code. The saved
+PNG can also be opened by double-clicking it in the Explorer.
+
+`setup_windows.ps1` uses the official CPU PyTorch wheel for a smaller,
+repeatable installation; this default environment does not use the NVIDIA GPU.
+For longer research runs, increase the epochs and pass more seeds after the
+first end-to-end run completes.
 
 The BTP extension preserves the original OCDiGCN baseline and adds a separate
 temporal research branch for BGL Protocol A. The baseline remains the reference

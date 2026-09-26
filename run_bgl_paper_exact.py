@@ -115,7 +115,8 @@ def graph_embeddings(model, loader, device):
             if hasattr(model, "graph_embeddings"):
                 output.append(model.graph_embeddings(batch))
             else:
-                output.extend([emb.mean(dim=0) for emb in model(batch)])
+                graph_vectors = [emb.mean(dim=0) for emb in model(batch)]
+                output.append(torch.stack(graph_vectors, dim=0))
     return torch.cat(output, dim=0)
 
 
@@ -131,7 +132,8 @@ def standardize_temporal_summaries(graphs, splits_dir):
 
 def run_seed(graphs, splits_dir, seed, epochs, batch_size, hidden_dim, lr,
              weight_decay, device, temporal=False, temporal_alpha=0.1,
-             temporal_freeze_epochs=20, temporal_lr=0.001, joint_lr=0.0001):
+             temporal_freeze_epochs=20, temporal_lr=0.001, joint_lr=0.0001,
+             artifact_dir=None):
     set_seed(seed)
     train_ids = pd.read_csv(os.path.join(splits_dir, "train_graph_ids.csv"))["node"].tolist()
     test_ids = pd.read_csv(os.path.join(splits_dir, "test_graph_ids.csv"))["node"].tolist()
@@ -193,8 +195,73 @@ def run_seed(graphs, splits_dir, seed, epochs, batch_size, hidden_dim, lr,
     test_embeddings = graph_embeddings(model, test_loader, device)
     scores = torch.linalg.vector_norm(test_embeddings - center, dim=1).cpu().numpy()
     labels = np.concatenate([g.y.cpu().numpy() for g in test])
-    from sklearn.metrics import average_precision_score, roc_auc_score
-    return roc_auc_score(labels, scores), average_precision_score(labels, scores)
+    from sklearn.metrics import (
+        average_precision_score, precision_recall_curve, roc_auc_score, roc_curve,
+    )
+    roc_auc = roc_auc_score(labels, scores)
+    average_precision = average_precision_score(labels, scores)
+
+    if artifact_dir:
+        os.makedirs(artifact_dir, exist_ok=True)
+        prefix = f"ocdigcn_seed_{seed}"
+        checkpoint_path = os.path.join(artifact_dir, f"{prefix}.pt")
+        torch.save({
+            "model_type": "temporal_digcn" if temporal else "digcn",
+            "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+            "center": center.detach().cpu(),
+            "input_dim": int(train[0].x.size(1)),
+            "hidden_dim": int(hidden_dim),
+            "seed": int(seed),
+            "epochs": int(epochs),
+            "temporal": bool(temporal),
+            "temporal_alpha": float(temporal_alpha),
+            "temporal_dim": int(train[0].temporal_summary.size(1)) if temporal else 0,
+            "roc_auc": float(roc_auc),
+            "average_precision": float(average_precision),
+        }, checkpoint_path)
+
+        test_ids = [getattr(graph, "node_id", str(i)) for i, graph in enumerate(test)]
+        pd.DataFrame({
+            "graph_id": test_ids,
+            "label": labels.astype(int),
+            "anomaly_score": scores,
+        }).to_csv(os.path.join(artifact_dir, f"{prefix}_predictions.csv"), index=False)
+
+        fpr, tpr, _ = roc_curve(labels, scores)
+        precision, recall, _ = precision_recall_curve(labels, scores)
+        pd.DataFrame({"false_positive_rate": fpr, "true_positive_rate": tpr}).to_csv(
+            os.path.join(artifact_dir, f"{prefix}_roc_curve.csv"), index=False
+        )
+        pd.DataFrame({"recall": recall, "precision": precision}).to_csv(
+            os.path.join(artifact_dir, f"{prefix}_precision_recall_curve.csv"), index=False
+        )
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+        axes[0].plot(fpr, tpr, color="#1769aa", linewidth=2,
+                     label=f"ROC AUC = {roc_auc:.4f}")
+        axes[0].plot([0, 1], [0, 1], color="gray", linestyle="--", linewidth=1)
+        axes[0].set(xlabel="False positive rate", ylabel="True positive rate",
+                    title="ROC curve", xlim=(0, 1), ylim=(0, 1))
+        axes[0].legend(loc="lower right")
+        axes[0].grid(alpha=0.2)
+        axes[1].plot(recall, precision, color="#d55e00", linewidth=2,
+                     label=f"Average precision = {average_precision:.4f}")
+        axes[1].set(xlabel="Recall", ylabel="Precision",
+                    title="Precision–Recall curve", xlim=(0, 1), ylim=(0, 1.02))
+        axes[1].legend(loc="lower left")
+        axes[1].grid(alpha=0.2)
+        figure.suptitle(f"OCDiGCN BGL evaluation (seed {seed})")
+        figure.tight_layout()
+        curve_path = os.path.join(artifact_dir, f"{prefix}_roc_pr_curves.png")
+        figure.savefig(curve_path, dpi=180, bbox_inches="tight")
+        plt.close(figure)
+        print(f"Saved checkpoint: {checkpoint_path}")
+        print(f"Saved ROC/PR curves: {curve_path}")
+    return roc_auc, average_precision
 
 
 if __name__ == "__main__":
@@ -213,6 +280,10 @@ if __name__ == "__main__":
     parser.add_argument("--freeze-epochs", type=int, default=20)
     parser.add_argument("--temporal-lr", type=float, default=0.001)
     parser.add_argument("--joint-lr", type=float, default=0.0001)
+    parser.add_argument(
+        "--artifact-dir", default="artifacts/enhanced_bgl",
+        help="Directory for per-seed model checkpoints, predictions, and ROC/PR curves.",
+    )
     args = parser.parse_args()
 
     if os.path.exists(args.normalized_dataset) and not args.temporal:
@@ -236,6 +307,7 @@ if __name__ == "__main__":
             temporal_freeze_epochs=args.freeze_epochs,
             temporal_lr=args.temporal_lr,
             joint_lr=args.joint_lr,
+            artifact_dir=args.artifact_dir,
         )
         results.append((roc, prc))
         print(f"Seed {seed}: ROC-AUC={roc:.4f}, PRC-AUC={prc:.4f}")
